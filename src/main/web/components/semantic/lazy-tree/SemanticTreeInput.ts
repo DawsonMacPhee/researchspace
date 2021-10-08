@@ -236,7 +236,6 @@ export class SemanticTreeInput extends Component<SemanticTreeInputProps, State> 
 
   componentDidMount() {
     const { initialSelection } = this.props;
-    console.log(this.props)
     if (initialSelection && initialSelection.length !== 0) {
       this.setInitialSelection(initialSelection).onValue(() => {/**/});
     }
