@@ -18,11 +18,10 @@
 package org.researchspace.sail.rest.tna;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
-import javax.ws.rs.client.WebTarget;
 import javax.ws.rs.core.MediaType;
 
-import org.apache.commons.compress.utils.Lists;
 import org.eclipse.rdf4j.common.iteration.CloseableIteration;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.query.BindingSet;
@@ -37,22 +36,6 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class ItemDetails {
-        private String parentId;
-
-        public ItemDetails() {
-        }
-
-        public void setParentId(String parentId) {
-            this.parentId = parentId;
-        }
-
-        public String getParentId() {
-            return parentId;
-        }
-    }
-
-    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class ScopeContent {
         private String description;
 
@@ -60,7 +43,11 @@ public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection
         }
 
         public String getDescription() {
-            return description.replace("<scopecontent><p>", "").replace("</p></scopecontent>", "");
+            if (description != null) {
+                return description.replace("<scopecontent><p>", "").replace("</p></scopecontent>", "");
+            } else {
+                return description;
+            }
         }
 
         public void setDescription(String description) {
@@ -70,7 +57,7 @@ public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class ChildDetails {
+    public static class CollectionRecord {
         private String citableReference;
         private String id;
         private String referencePart;
@@ -78,7 +65,7 @@ public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection
 
         private ScopeContent scopeContent;
 
-        public ChildDetails() {
+        public CollectionRecord() {
         }
 
         public String getCitableReference() {
@@ -123,18 +110,18 @@ public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class ChildrenDetails {
-        private List<ChildDetails> assets;
+    public static class DiscoveryCollection {
+        private List<CollectionRecord> assets;
         private boolean hasMoreAfterLast;
 
-        public ChildrenDetails() {
+        public DiscoveryCollection() {
         }
 
-        public void setAssets(List<ChildDetails> assets) {
+        public void setAssets(List<CollectionRecord> assets) {
             this.assets = assets;
         }
 
-        public List<ChildDetails> getAssets() {
+        public List<CollectionRecord> getAssets() {
             return assets;
         }
 
@@ -147,8 +134,7 @@ public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection
         }
     }
 
-    private final String DISCOVERY_DETAILS_URL = "https://discovery.nationalarchives.gov.uk/API/records/v1/details/";
-    private final String DISCOVERY_CHILDREN_URL = "https://discovery.nationalarchives.gov.uk/API/records/v1/children/";
+    private final String DISCOVERY_COLLECTION_URL = "https://discovery.nationalarchives.gov.uk/API/records/v1/collection/";
 
     public TnaDiscoveryApiRangeSearchSailConnection(RESTSail sailBase) {
         super(sailBase);
@@ -163,89 +149,39 @@ public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection
                     "http://www.researchspace.com/resource/system/services/tnadiscovery/hasCitableReference");
             IRI hasDescription = VF
                     .createIRI("http://www.researchspace.com/resource/system/services/tnadiscovery/hasDescription");
+            IRI isFound = VF.createIRI("http://www.researchspace.com/resource/system/services/tnadiscovery/isFound");
 
-            String fromItemId = parametersHolder.getInputParameters().get("from");
-            String toItemId = parametersHolder.getInputParameters().get("to");
+            String crns = parametersHolder.getInputParameters().get("crns");
             boolean includeItems = Boolean.valueOf(parametersHolder.getInputParameters().get("includeItems"));
 
-            WebTarget fromItemTarget = this.client.target(DISCOVERY_DETAILS_URL + fromItemId);
-            ItemDetails fromItemDetails = fromItemTarget.request(MediaType.APPLICATION_JSON).get(ItemDetails.class);
+            List<BindingSet> bindings = crns.lines().parallel().map(crn -> {
+                DiscoveryCollection collection = this.client.target(DISCOVERY_COLLECTION_URL).path(crn)
+                        .request(MediaType.APPLICATION_JSON).get(DiscoveryCollection.class);
 
-            List<BindingSet> bindings = Lists.newArrayList();
-            String lastId = fromItemId;
-            String parentId = fromItemDetails.getParentId();
-
-            while (!lastId.equals(toItemId)) {
-                ChildrenDetails children = this.client.target(DISCOVERY_CHILDREN_URL + parentId)
-                        .queryParam("batchStartRecordId", lastId).queryParam("limit", 100)
-                        .request(MediaType.APPLICATION_JSON).get(ChildrenDetails.class);
-
-                for (ChildDetails child : children.getAssets()) {
-                    if (includeItems && child.isParent) {
-                        bindings.addAll(
-                                this.getPieceItems(child.id, parametersHolder, hasCitableReference, hasDescription));
-                    } else {
-                        MapBindingSet mapBindingSet = new MapBindingSet();
-                        mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
-                                VF.createLiteral(child.getCitableReference()));
+                List<CollectionRecord> records = collection.getAssets();
+                MapBindingSet mapBindingSet = new MapBindingSet();
+                if (records.size() == 1) {
+                    var r = records.get(0);
+                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(isFound),
+                            VF.createLiteral(true));
+                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
+                            VF.createLiteral(r.getCitableReference()));
+                    if (r.getScopeContent() != null && r.getScopeContent().getDescription() != null) {
                         mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasDescription),
-                                VF.createLiteral(child.getScopeContent().getDescription()));
-                        bindings.add(mapBindingSet);
+                                VF.createLiteral(r.getScopeContent().getDescription()));
                     }
-
-                    lastId = child.id;
-                    if (child.getId().equals(toItemId)) {
-                        break;
-                    }
+                } else {
+                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(isFound),
+                            VF.createLiteral(false));
+                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
+                            VF.createLiteral(crn));
                 }
+                return mapBindingSet;
+            }).collect(Collectors.toList());
 
-                if (children.hasMoreAfterLast != true && !lastId.equals(toItemId)) {
-                    // if we didn't get all pieces that we wanted from the range, then we need to
-                    // find the next "parent folder" that has them in place
-                    WebTarget parentOfaParentTarget = this.client.target(DISCOVERY_DETAILS_URL + parentId);
-                    ItemDetails parentOfaParentDetails = parentOfaParentTarget.request(MediaType.APPLICATION_JSON)
-                            .get(ItemDetails.class);
-
-                    ChildrenDetails parentOfaParentChildren = this.client
-                            .target(DISCOVERY_CHILDREN_URL + parentOfaParentDetails.parentId)
-                            .queryParam("batchStartRecordId", parentId).queryParam("limit", 2)
-                            .request(MediaType.APPLICATION_JSON).get(ChildrenDetails.class);
-
-                    parentId = parentOfaParentChildren.getAssets().get(1).getId();
-                }
-            }
             return new CollectionIteration<BindingSet, QueryEvaluationException>(bindings);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-    }
-
-    private List<BindingSet> getPieceItems(String parentId, ServiceParametersHolder parametersHolder,
-            IRI hasCitableReference, IRI hasDescription) {
-        boolean all = false;
-        String lastId = null;
-        List<BindingSet> bindings = Lists.newArrayList();
-        while (!all) {
-            WebTarget childrenTarget = this.client.target(DISCOVERY_CHILDREN_URL + parentId).queryParam("limit", 100);
-            if (lastId != null) {
-                childrenTarget = childrenTarget.queryParam("batchStartRecordId", lastId);
-            }
-            ChildrenDetails children = childrenTarget.request(MediaType.APPLICATION_JSON).get(ChildrenDetails.class);
-
-            for (ChildDetails child : children.getAssets()) {
-                MapBindingSet mapBindingSet = new MapBindingSet();
-                mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
-                        VF.createLiteral(child.getCitableReference()));
-                mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasDescription),
-                        VF.createLiteral(child.getScopeContent().getDescription()));
-                bindings.add(mapBindingSet);
-                lastId = child.id;
-            }
-
-            if (children.hasMoreAfterLast == false) {
-                all = true;
-            }
-        }
-        return bindings;
     }
 }
