@@ -154,33 +154,35 @@ public class TnaDiscoveryApiRangeSearchSailConnection extends RESTSailConnection
             String crns = parametersHolder.getInputParameters().get("crns");
             boolean includeItems = Boolean.valueOf(parametersHolder.getInputParameters().get("includeItems"));
 
-            List<BindingSet> bindings = crns.lines().parallel().map(crn -> {
-                DiscoveryCollection collection = this.client.target(DISCOVERY_COLLECTION_URL).path(crn)
-                        .request(MediaType.APPLICATION_JSON).get(DiscoveryCollection.class);
+            List<BindingSet> bindings = crns.lines().filter(s -> s != null).map(s -> s.trim()).filter(s -> !s.isEmpty())
+                    .map(crn -> {
+                        DiscoveryCollection collection = this.client.target(DISCOVERY_COLLECTION_URL).path(crn)
+                                .request(MediaType.APPLICATION_JSON).get(DiscoveryCollection.class);
 
-                List<CollectionRecord> records = collection.getAssets();
-                MapBindingSet mapBindingSet = new MapBindingSet();
-                if (records.size() == 1) {
-                    var r = records.get(0);
-                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(isFound),
-                            VF.createLiteral(true));
-                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
-                            VF.createLiteral(r.getCitableReference()));
-                    if (r.getScopeContent() != null && r.getScopeContent().getDescription() != null) {
-                        mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasDescription),
-                                VF.createLiteral(r.getScopeContent().getDescription()));
-                    }
-                } else {
-                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(isFound),
-                            VF.createLiteral(false));
-                    mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
-                            VF.createLiteral(crn));
-                }
-                return mapBindingSet;
-            }).collect(Collectors.toList());
+                        List<CollectionRecord> records = collection.getAssets();
+                        MapBindingSet mapBindingSet = new MapBindingSet();
+                        if (records.size() == 1) {
+                            var r = records.get(0);
+                            mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(isFound),
+                                    VF.createLiteral(true));
+                            mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
+                                    VF.createLiteral(r.getCitableReference()));
+                            if (r.getScopeContent() != null && r.getScopeContent().getDescription() != null) {
+                                mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasDescription),
+                                        VF.createLiteral(r.getScopeContent().getDescription()));
+                            }
+                        } else {
+                            mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(isFound),
+                                    VF.createLiteral(false));
+                            mapBindingSet.addBinding(parametersHolder.getOutputVariables().get(hasCitableReference),
+                                    VF.createLiteral(crn));
+                        }
+                        return mapBindingSet;
+                    }).collect(Collectors.toList());
 
             return new CollectionIteration<BindingSet, QueryEvaluationException>(bindings);
         } catch (Exception e) {
+            e.printStackTrace();
             throw new RuntimeException(e);
         }
     }
